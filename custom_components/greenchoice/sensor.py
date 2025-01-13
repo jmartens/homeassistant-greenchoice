@@ -3,8 +3,6 @@ import typing as t
 from collections import namedtuple
 from datetime import timedelta
 
-import homeassistant.helpers.config_validation as cv
-import voluptuous as vol
 from homeassistant.components.sensor import (
     SensorEntity,
     SensorDeviceClass,
@@ -23,24 +21,15 @@ from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.util import slugify, Throttle
 
 from .api import GreenchoiceApi
+from .const import CONF_PASSWORD, CONF_USERNAME
+from .config_flow import DATA_SCHEMA
 
 _LOGGER = logging.getLogger(__name__)
 
-CONF_USERNAME = "username"
-CONF_PASSWORD = "password"  # nosec:B105
-
-DEFAULT_NAME = "Energieverbruik"
-DEFAULT_DATE_FORMAT = "%y-%m-%dT%H:%M:%S"
 
 MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=3600)
 
-PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
-    {
-        vol.Required(CONF_USERNAME): cv.string,
-        vol.Required(CONF_PASSWORD): cv.string,
-        vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
-    }
-)
+PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(DATA_SCHEMA)
 
 
 class Unit:
