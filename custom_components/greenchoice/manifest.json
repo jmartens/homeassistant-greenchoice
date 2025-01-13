@@ -7,6 +7,7 @@
   "codeowners": ["@jessevl", "@barisdemirdelen"],
   "integration_type": "hub",
   "iot_class": "cloud_polling",
+  "loggers": ["custom_components.greenchoice"],
   "requirements": ["requests>=2.0.0,<3.0.0", "beautifulsoup4>=4.0.0,<5.0.0"],
   "supported_platforms": ["sensor"],
   "version": "2.1.1"
