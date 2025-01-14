@@ -10,11 +10,12 @@ from .const import DOMAIN, DEFAULT_NAME
 
 _LOGGER = logging.getLogger(__name__)
 
-DATA_SCHEMA = vol.Schema({
+DATA_SCHEMA = vol.Schema(
+    {
         vol.Required(CONF_USERNAME): str,
         vol.Required(CONF_PASSWORD): str,
         vol.Optional("name", default=DEFAULT_NAME): str,
-})
+    }
 )
 
 
@@ -38,7 +39,9 @@ class GreenchoiceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.warning("Invalid authentication provided.")
                 errors["base"] = "invalid_auth"
             else:
-                _LOGGER.info("Creating config entry for username=%s, name=%s", username, name)
+                _LOGGER.info(
+                    "Creating config entry for username=%s, name=%s", username, name
+                )
                 # Save the config entry
                 return self.async_create_entry(title=name, data=user_input)
 
