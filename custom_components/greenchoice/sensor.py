@@ -1,150 +1,123 @@
 import logging
-from collections import namedtuple
 from datetime import timedelta
 
+import homeassistant.helpers.config_validation as cv
+import voluptuous as vol
 from homeassistant.components.sensor import (
     SensorEntity,
     SensorDeviceClass,
     SensorStateClass,
+    PLATFORM_SCHEMA,
 )
-from homeassistant.const import CONF_NAME, CURRENCY_EURO, UnitOfEnergy, UnitOfVolume
+from homeassistant.const import (
+    CONF_NAME,
+    CURRENCY_EURO,
+    UnitOfEnergy,
+    UnitOfVolume,
+)
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import (
-    DataUpdateCoordinator,
-    CoordinatorEntity,
-)
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+from homeassistant.util import slugify, Throttle
 
 from .api import GreenchoiceApi
-from .const import DOMAIN, CONF_USERNAME, CONF_PASSWORD, DEFAULT_NAME
 
 _LOGGER = logging.getLogger(__name__)
 
-# Constants
-SCAN_INTERVAL = timedelta(hours=1)
+CONF_USERNAME = "username"
+CONF_PASSWORD = "password"  # nosec:B105
+
+DEFAULT_NAME = "Energieverbruik"
+DEFAULT_DATE_FORMAT = "%y-%m-%dT%H:%M:%S"
+
+MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=3600)
+
+PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
+    {
+        vol.Required(CONF_USERNAME): cv.string,
+        vol.Required(CONF_PASSWORD): cv.string,
+        vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
+    }
+)
 
 
 class Unit:
-    """Unit constants for sensor measurements."""
     KWH = UnitOfEnergy.KILO_WATT_HOUR
     EUR_KWH = f"{CURRENCY_EURO}/{UnitOfEnergy.KILO_WATT_HOUR}"
     M3 = UnitOfVolume.CUBIC_METERS
     EUR_M3 = f"{CURRENCY_EURO}/{UnitOfVolume.CUBIC_METERS}"
 
 
-SensorInfo = namedtuple("SensorInfo", ["device_class", "unit", "icon"])
-sensor_infos = {
-    "electricity_consumption_high": SensorInfo(
-        SensorDeviceClass.ENERGY, Unit.KWH, "weather-sunset-up"
-    ),
-    "electricity_consumption_low": SensorInfo(
-        SensorDeviceClass.ENERGY, Unit.KWH, "weather-sunset-down"
-    ),
-    "electricity_consumption_total": SensorInfo(
-        SensorDeviceClass.ENERGY, Unit.KWH, "transmission-tower-export"
-    ),
-    "electricity_return_high": SensorInfo(
-        SensorDeviceClass.ENERGY, Unit.KWH, "solar-power"
-    ),
-    "electricity_return_low": SensorInfo(
-        SensorDeviceClass.ENERGY, Unit.KWH, "solar-power"
-    ),
-    "electricity_return_total": SensorInfo(
-        SensorDeviceClass.ENERGY, Unit.KWH, "transmission-tower-import"
-    ),
-    "electricity_price_low": SensorInfo(
-        SensorDeviceClass.MONETARY, Unit.EUR_KWH, "currency-eur"
-    ),
-    "electricity_price_high": SensorInfo(
-        SensorDeviceClass.MONETARY, Unit.EUR_KWH, "currency-eur"
-    ),
-    "electricity_price_single": SensorInfo(
-        SensorDeviceClass.MONETARY, Unit.EUR_KWH, "currency-eur"
-    ),
-    "electricity_return_price": SensorInfo(
-        SensorDeviceClass.MONETARY, Unit.EUR_KWH, "currency-eur"
-    ),
-    "electricity_return_cost": SensorInfo(
-        SensorDeviceClass.MONETARY, Unit.EUR_KWH, "currency-eur"
-    ),
-    "gas_consumption": SensorInfo(SensorDeviceClass.GAS, Unit.M3, "fire"),
-    "gas_price": SensorInfo(SensorDeviceClass.MONETARY, Unit.EUR_M3, "currency-eur"),
-}
-
-
-async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+async def async_setup_platform(
+    hass: HomeAssistant,
+    config: ConfigType,
+    async_add_entities: AddEntitiesCallback,
+    discovery_info: DiscoveryInfoType | None = None,
 ) -> None:
-    """Set up Greenchoice sensors from a config entry."""
-    username = entry.data[CONF_USERNAME]
-    password = entry.data[CONF_PASSWORD]
-    name = entry.data.get(CONF_NAME, DEFAULT_NAME)
+    name = config.get(CONF_NAME)
+    username = config.get(CONF_USERNAME)
+    password = config.get(CONF_PASSWORD)
 
-    _LOGGER.debug("Setting up Greenchoice sensors")
-    api = GreenchoiceApi(username, password)
+    _LOGGER.debug("Set up platform")
+    greenchoice_api = GreenchoiceApi(username, password)
 
-    # Coordinator for managing updates
-    coordinator = GreenchoiceCoordinator(hass, api)
-    await coordinator.async_config_entry_first_refresh()
+    await throttled_api_update(greenchoice_api)
 
-    # Create sensor entities
     sensors = [
-        GreenchoiceSensor(coordinator, name, sensor_name)
+        GreenchoiceSensor(
+            greenchoice_api,
+            name,
+            sensor_name,
+        )
         for sensor_name in sensor_infos
     ]
-    async_add_entities(sensors, update_before_add=False)
+
+    async_add_entities(sensors, True)
 
 
-class GreenchoiceCoordinator(DataUpdateCoordinator):
-    """Class to manage fetching Greenchoice data from API."""
-
-    def __init__(self, hass: HomeAssistant, api: GreenchoiceApi) -> None:
-        """Initialize the coordinator."""
-        super().__init__(
-            hass,
-            _LOGGER,
-            name="Greenchoice",
-            update_interval=SCAN_INTERVAL,
-        )
-        self.api = api
-
-    async def _async_update_data(self):
-        """Fetch data from API."""
-        _LOGGER.debug("Fetching data from Greenchoice API")
-        return await self.api.async_update()
+@Throttle(MIN_TIME_BETWEEN_UPDATES)
+async def throttled_api_update(api):
+    _LOGGER.debug("Throttled update called.")
+    api_result = await api.async_update()
+    _LOGGER.debug("Api result: %s", api_result)
+    return api_result
 
 
-class GreenchoiceSensor(CoordinatorEntity, SensorEntity):
-    """Representation of a Greenchoice sensor."""
-
-    def __init__(self, coordinator, name, measurement_type):
-        """Initialize the sensor."""
-        super().__init__(coordinator)
+class GreenchoiceSensor(SensorEntity):
+    def __init__(
+        self,
+        greenchoice_api,
+        name,
+        measurement_type,
+    ):
+        self._api = greenchoice_api
         self._measurement_type = measurement_type
-        self._measurement_date_key = (
-            "measurement_date_electricity"
-            if "electricity" in self._measurement_type
-            else "measurement_date_gas"
+        self._measurement_date = None
+        self._name = f"{name} {measurement_type}"
+        self._state = None
+        self._unit_of_measurement = sensor_infos[measurement_type].unit
+        self._icon = sensor_infos[measurement_type].icon
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def state(self):
+        return self._state
+
+    @property
+    def unit_of_measurement(self):
+        return self._unit_of_measurement
+
+    @property
+    def icon(self):
+        return self._icon
+
+    async def async_update(self):
+        _LOGGER.debug("Update called")
+        await self._api.async_update()
+        self._state = self._api.result.get(self._measurement_type)
+        self._measurement_date = self._api.result.get(
+            f"measurement_date_{self._measurement_type}"
         )
-
-        sensor_info = sensor_infos[self._measurement_type]
-
-        self._attr_unique_id = f"{name}_{measurement_type}"
-        self._attr_name = f"{name} {measurement_type.replace('_', ' ').title()}"
-        self._attr_icon = f"mdi:{sensor_info.icon}"
-        self._attr_state_class = SensorStateClass.TOTAL
-        self._attr_device_class = sensor_info.device_class
-        self._attr_native_unit_of_measurement = sensor_info.unit
-
-    @property
-    def native_value(self):
-        """Return the state of the sensor."""
-        data = self.coordinator.data or {}
-        return data.get(self._measurement_type)
-
-    @property
-    def extra_state_attributes(self):
-        """Return additional state attributes."""
-        data = self.coordinator.data or {}
-        return {"measurement_date": data.get(self._measurement_date_key)}

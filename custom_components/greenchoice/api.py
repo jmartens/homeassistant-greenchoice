@@ -260,3 +260,6 @@ class GreenchoiceApi:
 
         if pricing_details.gas:
             result["gas_price"] = pricing_details.gas.leveringAllIn
+
+    # Alias for update method
+    async_update = update
