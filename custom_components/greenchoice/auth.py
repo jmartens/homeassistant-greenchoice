@@ -47,6 +47,13 @@ class Auth:
         state_elem = soup.find("input", {"name": "state"})
         session_state_elem = soup.find("input", {"name": "session_state"})
 
+        # Logging the contents of *elem
+        for item in [code_elem, scope_elem, state_elem, session_state_elem]:
+            if item:
+                logging.debug(f"Element tag: {item.name}, value: {item.attrs.get('value')}")
+            else:
+                logging.debug("Element is missing.")
+
         if not (code_elem and scope_elem and state_elem and session_state_elem):
             raise LoginError("Login failed, check your credentials?")
 
@@ -72,6 +79,8 @@ class Auth:
         # Sometimes we get Forbidden on token expiry
         if response.status == 403:
             return True
+
+        return False
 
     async def _activate_session(self) -> aiohttp.ClientSession:
         if self.session:
