@@ -16,6 +16,7 @@ from homeassistant.const import (
     UnitOfVolume,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.util import slugify, Throttle
@@ -48,6 +49,47 @@ class Unit:
     EUR_M3 = f"{CURRENCY_EURO}/{UnitOfVolume.CUBIC_METERS}"
 
 
+# Define sensor information
+sensor_infos = {
+    "electricity_consumption_low": {
+        "unit": Unit.KWH,
+        "icon": "mdi:flash"
+    },
+    "electricity_consumption_high": {
+        "unit": Unit.KWH,
+        "icon": "mdi:flash"
+    },
+    "electricity_consumption_total": {
+        "unit": Unit.KWH,
+        "icon": "mdi:flash"
+    },
+    "electricity_return_low": {
+        "unit": Unit.KWH,
+        "icon": "mdi:flash"
+    },
+    "electricity_return_high": {
+        "unit": Unit.KWH,
+        "icon": "mdi:flash"
+    },
+    "electricity_return_total": {
+        "unit": Unit.KWH,
+        "icon": "mdi:flash"
+    },
+    "gas_consumption": {
+        "unit": Unit.M3,
+        "icon": "mdi:fire"
+    },
+    "measurement_date_electricity": {
+        "unit": None,
+        "icon": "mdi:calendar"
+    },
+    "measurement_date_gas": {
+        "unit": None,
+        "icon": "mdi:calendar"
+    },
+}
+
+
 async def async_setup_platform(
     hass: HomeAssistant,
     config: ConfigType,
@@ -59,20 +101,23 @@ async def async_setup_platform(
     password = config.get(CONF_PASSWORD)
 
     _LOGGER.debug("Set up platform")
-    greenchoice_api = GreenchoiceApi(username, password)
+    try:
+        greenchoice_api = GreenchoiceApi(username, password)
+        await throttled_api_update(greenchoice_api)
 
-    await throttled_api_update(greenchoice_api)
+        sensors = [
+            GreenchoiceSensor(
+                greenchoice_api,
+                name,
+                sensor_name,
+            )
+            for sensor_name in sensor_infos
+        ]
 
-    sensors = [
-        GreenchoiceSensor(
-            greenchoice_api,
-            name,
-            sensor_name,
-        )
-        for sensor_name in sensor_infos
-    ]
-
-    async_add_entities(sensors, True)
+        async_add_entities(sensors, True)
+    except Exception as ex:
+        _LOGGER.error("Failed to set up Greenchoice sensor platform: %s", ex)
+        raise ConfigEntryNotReady from ex
 
 
 @Throttle(MIN_TIME_BETWEEN_UPDATES)
@@ -95,8 +140,8 @@ class GreenchoiceSensor(SensorEntity):
         self._measurement_date = None
         self._name = f"{name} {measurement_type}"
         self._state = None
-        self._unit_of_measurement = sensor_infos[measurement_type].unit
-        self._icon = sensor_infos[measurement_type].icon
+        self._unit_of_measurement = sensor_infos[measurement_type]["unit"]
+        self._icon = sensor_infos[measurement_type]["icon"]
 
     @property
     def name(self):

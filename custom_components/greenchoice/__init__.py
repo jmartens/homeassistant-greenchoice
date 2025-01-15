@@ -3,15 +3,17 @@ from __future__ import annotations
 import logging
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import ConfigType
-from homeassistant.config_entries import ConfigEntry, SOURCE_IMPORT
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import SOURCE_IMPORT
+from homeassistant.exceptions import ConfigEntryNotReady
 
 from .const import DOMAIN
+from .api import GreenchoiceApi
 
 _LOGGER = logging.getLogger(__name__)
 
 # Helper function for migrating YAML config
-async def migrate_yaml_to_config_flow(hass: HomeAssistant):
-    """Migrate YAML configuration to config flow."""
+def migrate_yaml_to_config_flow(hass: HomeAssistant):
     yaml_config = hass.data.get(DOMAIN)
     if not yaml_config:
         _LOGGER.debug("No YAML configuration found to migrate.")
@@ -24,28 +26,39 @@ async def migrate_yaml_to_config_flow(hass: HomeAssistant):
             break
     else:
         _LOGGER.info("Creating new config flow from YAML configuration.")
-        await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": SOURCE_IMPORT}, data=yaml_config
+        hass.async_create_task(
+            hass.config_entries.flow.async_init(
+                DOMAIN, context={"source": SOURCE_IMPORT}, data=yaml_config
+            )
         )
 
     hass.data.pop(DOMAIN, None)
 
-async def async_setup(hass: HomeAssistant, config: ConfigType):
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up Greenchoice integration from YAML config."""
     _LOGGER.debug("Setting up Greenchoice integration from YAML config.")
     if DOMAIN in config:
         hass.data[DOMAIN] = config[DOMAIN]
-        await migrate_yaml_to_config_flow(hass)
+        migrate_yaml_to_config_flow(hass)
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Greenchoice integration from a config entry."""
     _LOGGER.info("Setting up Greenchoice integration from config entry.")
     hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN] = entry.data
-    hass.async_create_task(
-        hass.config_entries.async_forward_entry_setup(entry, "sensor")
-    )
+
+    # Initialize API
+    api = GreenchoiceApi(entry.data["username"], entry.data["password"])
+
+    try:
+        await api.async_update()
+    except Exception as ex:
+        _LOGGER.error("Failed to connect to Greenchoice API: %s", ex)
+        raise ConfigEntryNotReady from ex
+
+    hass.data[DOMAIN][entry.entry_id] = api
+
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
