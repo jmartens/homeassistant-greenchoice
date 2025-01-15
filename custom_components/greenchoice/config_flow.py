@@ -79,3 +79,7 @@ class GreenchoiceOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_init(self, user_input=None) -> FlowResult:
         """Manage the Greenchoice options."""
         return await self.async_step_options(user_input)
+
+    async def async_supports_options_flow(cls, config_entry) -> bool:
+        """Return whether the options flow is supported."""
+        return True
