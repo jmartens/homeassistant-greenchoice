@@ -3,6 +3,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.config_entries import ConfigEntry  # Import ConfigEntry
 
 from .const import DOMAIN
 from .api import GreenchoiceApi
@@ -43,8 +44,14 @@ class GreenchoiceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle reauthentication."""
         return await self.async_step_user(user_input)
 
+class GreenchoiceOptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle Greenchoice options."""
+
+    def __init__(self, config_entry: ConfigEntry):
+        self.config_entry = config_entry
+
     async def async_step_init(self, user_input=None) -> FlowResult:
-        """Handle options flow."""
+        """Manage the Greenchoice options."""
         return await self.async_step_options(user_input)
 
     async def async_step_options(self, user_input=None) -> FlowResult:
@@ -69,17 +76,7 @@ class GreenchoiceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(step_id="options", data_schema=data_schema, errors=errors)
 
-@config_entries.HANDLERS.register(DOMAIN)
-class GreenchoiceOptionsFlowHandler(config_entries.OptionsFlow):
-    """Handle Greenchoice options."""
-
-    def __init__(self, config_entry):
-        self.config_entry = config_entry
-
-    async def async_step_init(self, user_input=None) -> FlowResult:
-        """Manage the Greenchoice options."""
-        return await self.async_step_options(user_input)
-
-    async def async_supports_options_flow(cls, config_entry) -> bool:
+    @staticmethod
+    async def async_supports_options_flow(config_entry: ConfigEntry) -> bool:
         """Return whether the options flow is supported."""
         return True
