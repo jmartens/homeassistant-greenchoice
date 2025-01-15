@@ -39,6 +39,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     _LOGGER.debug("Setting up Greenchoice integration from YAML config.")
     if DOMAIN in config:
         hass.data[DOMAIN] = config[DOMAIN]
+        _LOGGER.debug("Loaded Greenchoice configuration from YAML: %s", hass.data[DOMAIN])
         migrate_yaml_to_config_flow(hass)
     return True
 
@@ -48,6 +49,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
 
     # Initialize API
+    _LOGGER.debug("Greenchoice entry data: %s", entry.data)
     api = GreenchoiceApi(entry.data["username"], entry.data["password"])
 
     try:
