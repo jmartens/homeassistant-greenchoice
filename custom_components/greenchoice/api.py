@@ -10,14 +10,7 @@ from .model import MeterReadings, Reading, Rates, Profile
 from .model import Preferences
 from .util import curl_dump
 
-# Force the log level for easy debugging.
-# None          - Don't force any log level and use the defaults.
-# logging.DEBUG - Force debug logging.
-#   See the logging package for additional log levels.
-_FORCE_LOG_LEVEL: Union[int, None] = None
 _LOGGER = logging.getLogger(__name__)
-if _FORCE_LOG_LEVEL is not None:
-    _LOGGER.setLevel(_FORCE_LOG_LEVEL)
 
 BASE_URL = "https://mijn.greenchoice.nl"
 
@@ -41,9 +34,12 @@ class GreenchoiceApi:
         _LOGGER.debug(
             f"Request: {method} {endpoint} {data if data is not None else json}"
         )
+        if not self.auth.session:
+            self.auth.session = aiohttp.ClientSession()
+
         async with self.auth.session.request(method, endpoint, json=json) as response:
             if await self.auth.is_session_expired(response):
-                self.session = await self.auth.refresh_session()
+                self.auth.session = await self.auth.refresh_session()
                 async with self.auth.session.request(method, endpoint, json=json) as response:
                     _LOGGER.debug(await curl_dump(response.request))
             else:
@@ -60,14 +56,13 @@ class GreenchoiceApi:
             if len(response.history) > 1:
                 _LOGGER.debug("Response history len > 1. %s", response.history)
 
-            # Some API's may not work and there might be fallbacks for them
             if response.status == 404:
                 return response
 
             response.raise_for_status()
         except aiohttp.ClientResponseError as e:
             _LOGGER.error("HTTP Error: %s", e)
-            _LOGGER.error("Cookies: %s", [c.name for c in self.session.cookie_jar])
+            _LOGGER.error("Cookies: %s", [c.key for c in self.auth.session.cookie_jar])
             if _retry_count == 0:
                 raise ApiError(f"HTTP Error: {e}")
 
