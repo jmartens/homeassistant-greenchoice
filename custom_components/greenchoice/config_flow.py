@@ -60,10 +60,12 @@ class GreenchoiceOptionsFlowHandler(config_entries.OptionsFlow):
 
         if user_input is not None:
             try:
+                _LOGGER.debug(f"Updating config entry with data: {user_input}")
                 # Attempt to connect to Greenchoice API
                 api = GreenchoiceApi(user_input["username"], user_input["password"])
                 await api.async_update()
                 self.hass.config_entries.async_update_entry(self.config_entry, data=user_input)
+                _LOGGER.debug(f"Config entry updated successfully: {self.config_entry.data}")
                 return self.async_create_entry(title="", data={})
             except Exception as ex:
                 _LOGGER.error("Failed to connect to Greenchoice API: %s", ex)
