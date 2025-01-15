@@ -66,6 +66,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a Greenchoice config entry."""
     _LOGGER.info("Unloading Greenchoice integration.")
-    if DOMAIN in hass.data:
-        hass.data.pop(DOMAIN)
+    hass.data[DOMAIN].pop(entry.entry_id)
     return await hass.config_entries.async_forward_entry_unload(entry, "sensor")
+
+async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Update Greenchoice integration options."""
+    _LOGGER.info("Updating Greenchoice integration options.")
+    await async_setup_entry(hass, entry)
+    return True
