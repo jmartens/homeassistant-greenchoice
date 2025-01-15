@@ -3,7 +3,7 @@ from datetime import datetime, UTC
 from typing import Union
 from urllib.parse import urlencode
 
-import requests
+import aiohttp
 
 from .auth import Auth
 from .model import MeterReadings, Reading, Rates, Profile
@@ -35,79 +35,79 @@ class GreenchoiceApi:
 
         self.result = {}
 
-    def _authenticated_request(
+    async def _authenticated_request(
         self, method: str, endpoint: str, data=None, json=None
-    ) -> requests.models.Response:
+    ) -> aiohttp.ClientResponse:
         _LOGGER.debug(
             f"Request: {method} {endpoint} {data if data is not None else json}"
         )
-        response = self.auth.session.request(method, endpoint, data=data, json=json)
-        if self.auth.is_session_expired(response):
-            self.session = self.auth.refresh_session()
-            response = self.auth.session.request(method, endpoint, data=data, json=json)
+        async with self.auth.session.request(method, endpoint, json=json) as response:
+            if await self.auth.is_session_expired(response):
+                self.session = await self.auth.refresh_session()
+                async with self.auth.session.request(method, endpoint, json=json) as response:
+                    _LOGGER.debug(await curl_dump(response.request))
+            else:
+                _LOGGER.debug(await curl_dump(response.request))
+            return response
 
-        _LOGGER.debug(curl_dump(response.request))
-
-        return response
-
-    def request(
+    async def request(
         self, method: str, endpoint: str, data=None, _retry_count=2
-    ) -> requests.Response:
+    ) -> aiohttp.ClientResponse:
         try:
             target_url = BASE_URL + endpoint
-            response = self._authenticated_request(method, target_url, json=data)
+            response = await self._authenticated_request(method, target_url, json=data)
 
             if len(response.history) > 1:
                 _LOGGER.debug("Response history len > 1. %s", response.history)
 
-            # Some api's may not work and there might be fallbacks for them
-            if response.status_code == 404:
+            # Some API's may not work and there might be fallbacks for them
+            if response.status == 404:
                 return response
 
             response.raise_for_status()
-        except requests.HTTPError as e:
+        except aiohttp.ClientResponseError as e:
             _LOGGER.error("HTTP Error: %s", e)
-            _LOGGER.error("Cookies: %s", [c.name for c in self.session.cookies])
+            _LOGGER.error("Cookies: %s", [c.name for c in self.session.cookie_jar])
             if _retry_count == 0:
                 raise ApiError(f"HTTP Error: {e}")
 
             _LOGGER.debug("Retrying request")
-            return self.request(method, endpoint, data, _retry_count - 1)
+            return await self.request(method, endpoint, data, _retry_count - 1)
 
         _LOGGER.debug("Request success")
         return response
 
     @staticmethod
-    def _validate_response(response: requests.Response) -> dict:
+    async def _validate_response(response: aiohttp.ClientResponse) -> dict:
         if not response:
             raise ApiError("Error retrieving response!")
 
         try:
-            response_json = response.json()
-        except requests.exceptions.JSONDecodeError as e:
+            response_json = await response.json()
+        except aiohttp.ClientResponseError as e:
             raise ApiError("Could not parse response: invalid JSON", e)
 
         return response_json
 
-    def microbus_init(self) -> dict:
-        response = self.request("GET", "/microbus/init")
-        return self._validate_response(response)
+    async def microbus_init(self) -> dict:
+        response = await self.request("GET", "/microbus/init")
+        return await self._validate_response(response)
 
-    def get_preferences(self) -> Preferences:
-        preferences_json = self._validate_response(
-            self.request("GET", f"/api/v2/Preferences/")
+    async def get_preferences(self) -> Preferences:
+        preferences_json = await self._validate_response(
+            await self.request("GET", "/api/v2/Preferences/")
         )
         return Preferences.from_dict(preferences_json)
 
-    def get_profiles(self) -> list[Profile]:
-        profiles_json = self._validate_response(
-            self.request("GET", f"/api/v2/Profiles/")
+    async def get_profiles(self) -> list[Profile]:
+        profiles_json = await self._validate_response(
+            await self.request("GET", "/api/v2/Profiles/")
         )
         return [Profile.from_dict(p) for p in profiles_json]
 
-    def get_meter_readings(self) -> MeterReadings:
-        meter_json = self._validate_response(
-            self.request(
+    async def get_meter_readings(self) -> MeterReadings:
+        meter_json = await self._validate_response(
+            await self.request(
                 "GET",
                 (
                     "/api/v2/customers/"
@@ -122,8 +122,8 @@ class GreenchoiceApi:
 
         return MeterReadings.from_dict(meter_json)
 
-    def get_ref_ids(self) -> tuple[str, str]:
-        init_config = self.microbus_init()
+    async def get_ref_ids(self) -> tuple[str, str]:
+        init_config = await self.microbus_init()
 
         customer_id = self.preferences.subject.customerNumber
         contract_id = self.preferences.subject.agreementId
@@ -139,7 +139,6 @@ class GreenchoiceApi:
                         client_address.get("klantnummer") == customer_id
                         and client_address.get("overeenkomstId") == contract_id
                     ):
-
                         contracts = client_address.get("contracten")
                         for contract in contracts:
                             if (
@@ -151,9 +150,8 @@ class GreenchoiceApi:
 
         return ref_id_electricity, ref_id_gas
 
-    def get_rates(self) -> Rates:
-
-        profiles = self.get_profiles()
+    async def get_rates(self) -> Rates:
+        profiles = await self.get_profiles()
         current_profile: Profile | None = None
         for profile in profiles:
             if (
@@ -165,7 +163,7 @@ class GreenchoiceApi:
         if not current_profile:
             raise ApiError("Cant find profile")
 
-        ref_id_electricity, ref_id_gas = self.get_ref_ids()
+        ref_id_electricity, ref_id_gas = await self.get_ref_ids()
 
         req_data = {
             "HouseNumber": current_profile.houseNumber,
@@ -178,44 +176,44 @@ class GreenchoiceApi:
             req_data["ReferenceIdGas"] = ref_id_gas
             req_data["AgreementIdGas"] = current_profile.agreementId
 
-        response = self.request(
+        response = await self.request(
             "GET",
             f"/api/v2/customers/{current_profile.customerNumber}/rates?{urlencode(req_data)}",
         )
-        if response.status_code == 404:
-            response = self.request("GET", "/api/tariffs")
-        pricing_details = self._validate_response(response)
+        if response.status == 404:
+            response = await self.request("GET", "/api/tariffs")
+        pricing_details = await self._validate_response(response)
         if "huidig" in pricing_details:
             pricing_details = pricing_details["huidig"]
 
         return Rates.from_dict(pricing_details)
 
-    def update(self) -> dict:
+    async def update(self) -> dict:
         self.result = {}
         try:
-            self.preferences = self.get_preferences()
+            self.preferences = await self.get_preferences()
         except ApiError:
             _LOGGER.error("Cant get preferences")
             return self.result
 
         try:
-            self.update_usage_values(self.result)
+            await self.update_usage_values(self.result)
         except ApiError:
             _LOGGER.error("Cant update usage values")
             pass
 
         try:
-            self.update_contract_values(self.result)
+            await self.update_contract_values(self.result)
         except ApiError:
             _LOGGER.error("Cant update contract values")
             pass
 
         return self.result
 
-    def update_usage_values(self, result: dict) -> None:
+    async def update_usage_values(self, result: dict) -> None:
         _LOGGER.debug("Retrieving meter values")
 
-        meter_readings = self.get_meter_readings()
+        meter_readings = await self.get_meter_readings()
 
         electricity_reading: Reading | None = meter_readings.last_electricity_reading
         gas_reading: Reading | None = meter_readings.last_gas_reading
@@ -242,10 +240,10 @@ class GreenchoiceApi:
             result["gas_consumption"] = gas_reading.gas
             result["measurement_date_gas"] = gas_reading.readingDate
 
-    def update_contract_values(self, result: dict) -> None:
+    async def update_contract_values(self, result: dict) -> None:
         _LOGGER.debug("Retrieving contract values")
 
-        pricing_details = self.get_rates()
+        pricing_details = await self.get_rates()
 
         if pricing_details.stroom:
             result["electricity_price_single"] = (

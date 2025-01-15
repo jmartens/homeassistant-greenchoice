@@ -1,10 +1,12 @@
 {
   "domain": "greenchoice",
-  "name": "Sensor Greenchoice",
+  "name": "Greenchoice Integration",
   "documentation": "https://github.com/barisdemirdelen/homeassistant-greenchoice/",
   "issue_tracker": "https://github.com/barisdemirdelen/homeassistant-greenchoice/issues",
   "codeowners": ["@jessevl", "@barisdemirdelen"],
   "iot_class": "cloud_polling",
-  "requirements": ["requests>=2.0.0,<3.0.0", "beautifulsoup4>=4.0.0,<5.0.0"],
-  "version": "2.1.1"
+  "requirements": ["beautifulsoup4>=4.0.0,<5.0.0", "aiohttp>=3.7.4,<4.0.0"],
+  "version": "2.1.1",
+  "config_flow": true,
+  "loggers": ["custom_components.greenchoice"]
 }

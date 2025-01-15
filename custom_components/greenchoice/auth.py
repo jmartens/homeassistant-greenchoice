@@ -2,8 +2,8 @@ import logging
 import re
 from urllib.parse import parse_qs, urlparse
 
-import bs4
-import requests
+import aiohttp
+from bs4 import BeautifulSoup
 
 
 class LoginError(Exception):
@@ -18,7 +18,6 @@ class Auth:
 
         self.logger = logging.getLogger(__name__)
         self.session = None
-        self.session = self.refresh_session()
 
         if not self._check_config():
             raise AttributeError("Configuration is incomplete")
@@ -33,15 +32,15 @@ class Auth:
         return True
 
     @staticmethod
-    def _get_verification_token(html_txt: str) -> str:
-        soup = bs4.BeautifulSoup(html_txt, "html.parser")
+    async def _get_verification_token(html_txt: str) -> str:
+        soup = BeautifulSoup(html_txt, "html.parser")
         token_elem = soup.find("input", {"name": "__RequestVerificationToken"})
 
         return token_elem.attrs.get("value")
 
     @staticmethod
-    def _get_oidc_params(html_txt: str) -> dict[str, str]:
-        soup = bs4.BeautifulSoup(html_txt, "html.parser")
+    async def _get_oidc_params(html_txt: str) -> dict:
+        soup = BeautifulSoup(html_txt, "html.parser")
 
         code_elem = soup.find("input", {"name": "code"})
         scope_elem = soup.find("input", {"name": "scope"})
@@ -59,10 +58,10 @@ class Auth:
         }
 
     @staticmethod
-    def is_session_expired(response: requests.Response) -> bool:
+    async def is_session_expired(response: aiohttp.ClientResponse) -> bool:
         # If the session expired, the client is redirected to the SSO login.
         for history_response in response.history:
-            if history_response.status_code != 302:
+            if history_response.status != 302:
                 continue
             location_header: str = history_response.headers.get("Location")
             if location_header is not None and re.search(
@@ -71,22 +70,21 @@ class Auth:
                 return True
 
         # Sometimes we get Forbidden on token expiry
-        if response.status_code == 403:
+        if response.status == 403:
             return True
 
-    def _activate_session(self) -> requests.Session:
+    async def _activate_session(self) -> aiohttp.ClientSession:
         if self.session:
-            self.session.close()
+            await self.session.close()
 
-        self.session = requests.Session()
+        self.session = aiohttp.ClientSession()
         self.logger.info("Retrieving login cookies")
 
         # first, get the login cookies and form data
-        login_page = self.session.get(self.base_url)
-
-        login_url = login_page.url
-        return_url = parse_qs(urlparse(login_url).query).get("ReturnUrl", "")
-        token = self._get_verification_token(login_page.text)
+        async with self.session.get(self.base_url) as login_page:
+            login_url = login_page.url
+            return_url = parse_qs(urlparse(str(login_url)).query).get("ReturnUrl", "")
+            token = await self._get_verification_token(await login_page.text())
 
         # perform actual sign in
         self.logger.debug("Logging in with username and password")
@@ -97,24 +95,24 @@ class Auth:
             "__RequestVerificationToken": token,
             "RememberLogin": True,
         }
-        auth_page = self.session.post(login_page.url, data=login_data)
-        auth_page.raise_for_status()
+        async with self.session.post(login_url, data=login_data) as auth_page:
+            auth_page.raise_for_status()
+            oidc_params = await self._get_oidc_params(await auth_page.text())
 
         # exchange oidc params for a login cookie (automatically saved in session)
         self.logger.debug("Signing in using OIDC")
-        oidc_params = self._get_oidc_params(auth_page.text)
-        response = self.session.post(f"{self.base_url}/signin-oidc", data=oidc_params)
-        response.raise_for_status()
+        async with self.session.post(f"{self.base_url}/signin-oidc", data=oidc_params) as response:
+            response.raise_for_status()
 
         self.logger.debug("Login success")
 
         return self.session
 
-    def refresh_session(self) -> requests.Session:
+    async def refresh_session(self) -> aiohttp.ClientSession:
         self.logger.debug("Session possibly expired, triggering refresh")
         try:
-            self._activate_session()
-        except requests.HTTPError:
+            await self._activate_session()
+        except aiohttp.ClientError:
             self.logger.error(
                 "Login failed! Please check your credentials and try again."
             )
